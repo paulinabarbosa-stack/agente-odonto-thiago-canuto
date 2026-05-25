@@ -107,8 +107,9 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
             "Content-Type": "application/json",
             "token": UAZAPI_TOKEN
         }
+        numero_limpo = telefone.replace("@s.whatsapp.net", "").replace(" ", "").strip()
         payload = {
-            "number": telefone,
+            "number": numero_limpo,
             "text": mensagem,
             "instance": UAZAPI_INSTANCE
         }
@@ -122,22 +123,28 @@ def extrair_mensagem(data: dict):
     """Extrai o número e o texto da mensagem recebida pelo webhook da UAZAPI."""
     try:
         # Ignora mensagens enviadas pelo próprio bot
-        if data.get("fromMe"):
+        if data.get("fromMe") or data.get("wasSentByApi"):
             return None, None
 
-        tipo = data.get("type", "")
+        # Telefone pode vir em "phone" ou "sender"
+        telefone = (
+            data.get("phone") or
+            data.get("sender", "").replace("@s.whatsapp.net", "") or
+            data.get("from", "").replace("@s.whatsapp.net", "")
+        )
 
-        # Só processa mensagens de texto
-        if tipo != "conversation" and tipo != "extendedTextMessage":
-            telefone = data.get("from", "").replace("@s.whatsapp.net", "")
+        if not telefone:
+            return None, None
+
+        # Tipo da mensagem pode vir em "messageType" ou "type"
+        tipo = (data.get("messageType") or data.get("type") or "").lower()
+
+        # Texto pode vir em "text" ou "body"
+        texto = data.get("text") or data.get("body") or ""
+
+        # Se não é texto, é mídia
+        if not texto and tipo not in ("conversation", "text"):
             return telefone, "__MIDIA__"
-
-        telefone = data.get("from", "").replace("@s.whatsapp.net", "")
-        
-        if tipo == "conversation":
-            texto = data.get("body", "")
-        else:
-            texto = data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
 
         return telefone, texto
 
