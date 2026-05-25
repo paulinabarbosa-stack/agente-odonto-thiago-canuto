@@ -107,9 +107,8 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
             "Content-Type": "application/json",
             "token": UAZAPI_TOKEN
         }
-        numero_limpo = telefone.replace("@s.whatsapp.net", "").replace(" ", "").strip()
         payload = {
-            "number": numero_limpo,
+            "number": telefone,
             "text": mensagem,
             "instance": UAZAPI_INSTANCE
         }
@@ -123,37 +122,22 @@ def extrair_mensagem(data: dict):
     """Extrai o número e o texto da mensagem recebida pelo webhook da UAZAPI."""
     try:
         # Ignora mensagens enviadas pelo próprio bot
-        if data.get("fromMe") or data.get("wasSentByApi"):
+        if data.get("fromMe"):
             return None, None
 
-        # Telefone: limpa +, espaços e hífens
-        telefone_raw = (
-            data.get("phone") or
-            data.get("sender", "").replace("@s.whatsapp.net", "") or
-            data.get("from", "").replace("@s.whatsapp.net", "")
-        )
-        telefone = telefone_raw.replace("+", "").replace(" ", "").replace("-", "").strip()
+        tipo = data.get("type", "")
 
-        if not telefone:
-            return None, None
+        # Só processa mensagens de texto
+        if tipo != "conversation" and tipo != "extendedTextMessage":
+            telefone = data.get("from", "").replace("@s.whatsapp.net", "")
+            return telefone, "__MIDIA__"
 
-        # Texto pode vir em vários lugares
-        texto = (
-            data.get("text") or
-            data.get("body") or
-            data.get("message", {}).get("content") or
-            data.get("message", {}).get("conversation") or
-            ""
-        )
-
-        # Tipo da mensagem
-        tipo = (data.get("messageType") or data.get("type") or "").lower()
-
-        # Se não tem texto, é mídia
-        if not texto:
-            if tipo not in ("conversation", "text", "extendedtextmessage"):
-                return telefone, "__MIDIA__"
-            return None, None
+        telefone = data.get("from", "").replace("@s.whatsapp.net", "")
+        
+        if tipo == "conversation":
+            texto = data.get("body", "")
+        else:
+            texto = data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
 
         return telefone, texto
 
