@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from openai import OpenAI
 import requests
 
 # ─── Configuração ───────────────────────────────────────────────────────────
@@ -10,11 +10,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-UAZAPI_URL = os.environ.get("UAZAPI_URL")          # Ex: https://sua-instancia.uazapi.com
+UAZAPI_URL = os.environ.get("UAZAPI_URL")
 UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
-UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE") # Nome da instância
+UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE")
 
 # ─── Prompt do Agente ────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto, localizada na Praça do Sagrado Coração, 103 - Diamantina, MG. Telefone: (38) 3531-0012.
@@ -65,79 +65,80 @@ Caso queira compartilhar sua experiência, sua avaliação é muito importante p
 - Mantenha o contexto da conversa para não repetir perguntas"""
 
 # ─── Histórico de conversas em memória ──────────────────────────────────────
-# Formato: { "numero_telefone": [ {"role": "user/model", "parts": ["texto"]} ] }
 historico = {}
 
 # ─── Funções auxiliares ──────────────────────────────────────────────────────
 
-def obter_resposta_gemini(telefone: str, mensagem_usuario: str) -> str:
-    """Envia mensagem para o Gemini mantendo histórico da conversa."""
+def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=SYSTEM_PROMPT
-        )
-
-        # Inicializa histórico se for novo contato
         if telefone not in historico:
             historico[telefone] = []
 
-        # Inicia chat com histórico existente
-        chat = model.start_chat(history=historico[telefone])
+        historico[telefone].append({"role": "user", "content": mensagem_usuario})
 
-        # Envia a mensagem
-        response = chat.send_message(mensagem_usuario)
-        resposta = response.text
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + historico[telefone]
+        )
 
-        # Atualiza o histórico
-        historico[telefone] = chat.history
+        resposta = response.choices[0].message.content
+        historico[telefone].append({"role": "assistant", "content": resposta})
 
         return resposta
 
     except Exception as e:
-        logger.error(f"Erro ao chamar Gemini: {e}")
+        logger.error(f"Erro ao chamar OpenAI: {e}")
         return "Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 😊"
 
 
 def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
-    """Envia mensagem de texto via UAZAPI."""
     try:
         url = f"{UAZAPI_URL}/send/text"
         headers = {
             "Content-Type": "application/json",
             "token": UAZAPI_TOKEN
         }
+        numero_limpo = telefone.replace("+", "").replace(" ", "").replace("-", "").strip()
         payload = {
-            "number": telefone,
+            "number": numero_limpo,
             "text": mensagem,
             "instance": UAZAPI_INSTANCE
         }
         response = requests.post(url, headers=headers, json=payload, timeout=10)
-        logger.info(f"Mensagem enviada para {telefone}: {response.status_code}")
+        logger.info(f"Mensagem enviada para {numero_limpo}: {response.status_code} | {response.text}")
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem WhatsApp: {e}")
 
 
 def extrair_mensagem(data: dict):
-    """Extrai o número e o texto da mensagem recebida pelo webhook da UAZAPI."""
     try:
-        # Ignora mensagens enviadas pelo próprio bot
-        if data.get("fromMe"):
+        if data.get("fromMe") or data.get("wasSentByApi"):
             return None, None
 
-        tipo = data.get("type", "")
+        telefone_raw = (
+            data.get("phone") or
+            data.get("sender", "").replace("@s.whatsapp.net", "") or
+            data.get("from", "").replace("@s.whatsapp.net", "")
+        )
+        telefone = telefone_raw.replace("+", "").replace(" ", "").replace("-", "").strip()
 
-        # Só processa mensagens de texto
-        if tipo != "conversation" and tipo != "extendedTextMessage":
-            telefone = data.get("from", "").replace("@s.whatsapp.net", "")
-            return telefone, "__MIDIA__"
+        if not telefone:
+            return None, None
 
-        telefone = data.get("from", "").replace("@s.whatsapp.net", "")
-        
-        if tipo == "conversation":
-            texto = data.get("body", "")
-        else:
-            texto = data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
+        texto = (
+            data.get("text") or
+            data.get("body") or
+            data.get("message", {}).get("content") or
+            data.get("message", {}).get("conversation") or
+            ""
+        )
+
+        tipo = (data.get("messageType") or data.get("type") or "").lower()
+
+        if not texto:
+            if tipo not in ("conversation", "text", "extendedtextmessage"):
+                return telefone, "__MIDIA__"
+            return None, None
 
         return telefone, texto
 
@@ -160,23 +161,25 @@ def webhook():
         logger.info(f"Webhook recebido: {json.dumps(data, ensure_ascii=False)}")
 
         telefone, texto = extrair_mensagem(data)
+        logger.info(f"Extraido -> telefone: {telefone} | texto: {texto}")
 
         if not telefone:
+            logger.info("Ignorado: sem telefone")
             return jsonify({"status": "ignorado"}), 200
 
-        # Mensagem de mídia (áudio, imagem, etc.)
         if texto == "__MIDIA__":
             resposta = "Olá! No momento só consigo receber mensagens de texto por aqui. Pode me escrever o que você precisa? 😊"
             enviar_mensagem_whatsapp(telefone, resposta)
             return jsonify({"status": "ok"}), 200
 
         if not texto:
+            logger.info("Ignorado: sem texto")
             return jsonify({"status": "ignorado"}), 200
 
-        # Gera resposta com Gemini
-        resposta = obter_resposta_gemini(telefone, texto)
+        logger.info(f"Chamando OpenAI para {telefone}")
+        resposta = obter_resposta_openai(telefone, texto)
+        logger.info(f"Resposta OpenAI: {resposta}")
 
-        # Envia resposta via WhatsApp
         enviar_mensagem_whatsapp(telefone, resposta)
 
         return jsonify({"status": "ok"}), 200
