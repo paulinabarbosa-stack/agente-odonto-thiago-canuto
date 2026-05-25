@@ -126,25 +126,34 @@ def extrair_mensagem(data: dict):
         if data.get("fromMe") or data.get("wasSentByApi"):
             return None, None
 
-        # Telefone pode vir em "phone" ou "sender"
-        telefone = (
+        # Telefone: limpa +, espaços e hífens
+        telefone_raw = (
             data.get("phone") or
             data.get("sender", "").replace("@s.whatsapp.net", "") or
             data.get("from", "").replace("@s.whatsapp.net", "")
         )
+        telefone = telefone_raw.replace("+", "").replace(" ", "").replace("-", "").strip()
 
         if not telefone:
             return None, None
 
-        # Tipo da mensagem pode vir em "messageType" ou "type"
+        # Texto pode vir em vários lugares
+        texto = (
+            data.get("text") or
+            data.get("body") or
+            data.get("message", {}).get("content") or
+            data.get("message", {}).get("conversation") or
+            ""
+        )
+
+        # Tipo da mensagem
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
-        # Texto pode vir em "text" ou "body"
-        texto = data.get("text") or data.get("body") or ""
-
-        # Se não é texto, é mídia
-        if not texto and tipo not in ("conversation", "text"):
-            return telefone, "__MIDIA__"
+        # Se não tem texto, é mídia
+        if not texto:
+            if tipo not in ("conversation", "text", "extendedtextmessage"):
+                return telefone, "__MIDIA__"
+            return None, None
 
         return telefone, texto
 
