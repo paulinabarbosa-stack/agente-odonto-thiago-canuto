@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from openai import OpenAI
 import requests
 
 # ─── Configuração ───────────────────────────────────────────────────────────
@@ -10,11 +10,9 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-
-UAZAPI_URL = os.environ.get("UAZAPI_URL")          # Ex: https://sua-instancia.uazapi.com
+UAZAPI_URL = os.environ.get("UAZAPI_URL")
 UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
-UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE") # Nome da instância
+UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE")
 
 # ─── Prompt do Agente ────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto, localizada na Praça do Sagrado Coração, 103 - Diamantina, MG. Telefone: (38) 3531-0012.
@@ -34,119 +32,115 @@ Seu papel é recepcionar os pacientes com simpatia e profissionalismo, entender 
 Cumprimente o paciente de forma calorosa e apresente-se. Pergunte o nome dele.
 
 ### 2. IDENTIFICAR A NECESSIDADE
-Pergunte o que o paciente está precisando ou qual especialidade tem interesse. Se ele não souber, apresente as opções de forma clara e amigável.
+Pergunte o que o paciente está precisando ou qual especialidade tem interesse.
 
 ### 3. APRESENTAR O PROFISSIONAL
-Com base na necessidade, indique o profissional mais adequado e explique brevemente a especialidade.
+Com base na necessidade, indique o profissional mais adequado.
 
 ### 4. COLETAR DADOS PARA AGENDAMENTO
-Colete as seguintes informações UMA DE CADA VEZ:
+Colete UMA DE CADA VEZ:
 - Nome completo
 - Telefone de contato (com DDD)
 - Data preferida para a consulta
 - Período preferido: manhã, tarde ou qualquer horário
 
 ### 5. CONFIRMAR AGENDAMENTO
-Repita todos os dados coletados e confirme com o paciente. Informe que a equipe entrará em contato para confirmar o horário exato.
+Repita os dados e informe que a equipe entrará em contato para confirmar o horário.
 
 ### 6. ENCERRAMENTO E AVALIAÇÃO
-Ao finalizar, agradeça e convide para avaliar no Google:
 "Foi um prazer te atender, [Nome]! 🦷✨
-Caso queira compartilhar sua experiência, sua avaliação é muito importante pra gente:
+Sua avaliação é muito importante pra gente:
 ⭐ https://maps.app.goo.gl/FQ6bkPPTxwNBUMiv5"
 
-## REGRAS IMPORTANTES
-
-- Seja sempre simpática, acolhedora e use linguagem acessível
+## REGRAS
+- Seja simpática e acolhedora
 - Use emojis com moderação
 - Faça UMA pergunta por vez
-- Se receber áudio ou imagem, responda: "Olá! No momento só consigo receber mensagens de texto por aqui. Pode me escrever o que você precisa? 😊"
-- Nunca invente preços, horários ou disponibilidade
-- Mantenha o contexto da conversa para não repetir perguntas"""
+- Se receber áudio ou imagem: "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊"
+- Nunca invente preços, horários ou disponibilidade"""
 
-# ─── Histórico de conversas em memória ──────────────────────────────────────
-# Formato: { "numero_telefone": [ {"role": "user/model", "parts": ["texto"]} ] }
+# ─── Histórico em memória ────────────────────────────────────────────────────
 historico = {}
 
-# ─── Funções auxiliares ──────────────────────────────────────────────────────
+# ─── Funções ─────────────────────────────────────────────────────────────────
 
-def obter_resposta_gemini(telefone: str, mensagem_usuario: str) -> str:
-    """Envia mensagem para o Gemini mantendo histórico da conversa."""
+def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=SYSTEM_PROMPT
-        )
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-        # Inicializa histórico se for novo contato
         if telefone not in historico:
             historico[telefone] = []
 
-        # Inicia chat com histórico existente
-        chat = model.start_chat(history=historico[telefone])
+        historico[telefone].append({"role": "user", "content": mensagem_usuario})
 
-        # Envia a mensagem
-        response = chat.send_message(mensagem_usuario)
-        resposta = response.text
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + historico[telefone]
+        )
 
-        # Atualiza o histórico
-        historico[telefone] = chat.history
-
+        resposta = response.choices[0].message.content
+        historico[telefone].append({"role": "assistant", "content": resposta})
         return resposta
 
     except Exception as e:
-        logger.error(f"Erro ao chamar Gemini: {e}")
-        return "Desculpe, tive um probleminha aqui. Pode repetir sua mensagem? 😊"
+        logger.error(f"Erro OpenAI: {e}")
+        return "Desculpe, tive um probleminha. Pode repetir? 😊"
 
 
 def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
-    """Envia mensagem de texto via UAZAPI."""
     try:
         url = f"{UAZAPI_URL}/send/text"
-        headers = {
-            "Content-Type": "application/json",
-            "token": UAZAPI_TOKEN
-        }
-        payload = {
-            "number": telefone,
-            "text": mensagem,
-            "instance": UAZAPI_INSTANCE
-        }
+        headers = {"Content-Type": "application/json", "token": UAZAPI_TOKEN}
+        numero_limpo = telefone.replace("+", "").replace(" ", "").replace("-", "").strip()
+        payload = {"number": numero_limpo, "text": mensagem, "instance": UAZAPI_INSTANCE}
         response = requests.post(url, headers=headers, json=payload, timeout=10)
-        logger.info(f"Mensagem enviada para {telefone}: {response.status_code}")
+        logger.info(f"Enviado para {numero_limpo}: {response.status_code} | {response.text}")
     except Exception as e:
-        logger.error(f"Erro ao enviar mensagem WhatsApp: {e}")
+        logger.error(f"Erro ao enviar: {e}")
 
 
 def extrair_mensagem(data: dict):
-    """Extrai o número e o texto da mensagem recebida pelo webhook da UAZAPI."""
     try:
-        # Ignora mensagens enviadas pelo próprio bot
-        if data.get("fromMe"):
+        if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        tipo = data.get("type", "")
+        # Tenta pegar o telefone de vários campos possíveis
+        telefone_raw = (
+            data.get("phone") or
+            data.get("sender_pn") or
+            data.get("sender", "").replace("@s.whatsapp.net", "") or
+            data.get("from", "").replace("@s.whatsapp.net", "") or
+            data.get("owner", "")
+        )
+        telefone = telefone_raw.replace("+", "").replace(" ", "").replace("-", "").strip()
 
-        # Só processa mensagens de texto
-        if tipo != "conversation" and tipo != "extendedTextMessage":
-            telefone = data.get("from", "").replace("@s.whatsapp.net", "")
-            return telefone, "__MIDIA__"
+        if not telefone:
+            return None, None
 
-        telefone = data.get("from", "").replace("@s.whatsapp.net", "")
-        
-        if tipo == "conversation":
-            texto = data.get("body", "")
-        else:
-            texto = data.get("message", {}).get("extendedTextMessage", {}).get("text", "")
+        # Tenta pegar o texto de vários campos possíveis
+        texto = (
+            data.get("text") or
+            data.get("body") or
+            (data.get("message") or {}).get("content") or
+            (data.get("message") or {}).get("conversation") or
+            ""
+        )
+
+        tipo = (data.get("messageType") or data.get("type") or "").lower()
+
+        if not texto:
+            if tipo not in ("conversation", "text", "extendedtextmessage"):
+                return telefone, "__MIDIA__"
+            return None, None
 
         return telefone, texto
 
     except Exception as e:
-        logger.error(f"Erro ao extrair mensagem: {e}")
+        logger.error(f"Erro ao extrair: {e}")
         return None, None
 
 
-# ─── Rotas Flask ─────────────────────────────────────────────────────────────
+# ─── Rotas ───────────────────────────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def home():
@@ -157,36 +151,31 @@ def home():
 def webhook():
     try:
         data = request.json
-        logger.info(f"Webhook recebido: {json.dumps(data, ensure_ascii=False)}")
+        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:500]}")
 
         telefone, texto = extrair_mensagem(data)
+        logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
 
         if not telefone:
             return jsonify({"status": "ignorado"}), 200
 
-        # Mensagem de mídia (áudio, imagem, etc.)
         if texto == "__MIDIA__":
-            resposta = "Olá! No momento só consigo receber mensagens de texto por aqui. Pode me escrever o que você precisa? 😊"
-            enviar_mensagem_whatsapp(telefone, resposta)
+            enviar_mensagem_whatsapp(telefone, "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊")
             return jsonify({"status": "ok"}), 200
 
         if not texto:
             return jsonify({"status": "ignorado"}), 200
 
-        # Gera resposta com Gemini
-        resposta = obter_resposta_gemini(telefone, texto)
-
-        # Envia resposta via WhatsApp
+        resposta = obter_resposta_openai(telefone, texto)
+        logger.info(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(telefone, resposta)
 
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        logger.error(f"Erro no webhook: {e}")
+        logger.error(f"Erro webhook: {e}")
         return jsonify({"error": str(e)}), 500
 
-
-# ─── Inicialização ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
