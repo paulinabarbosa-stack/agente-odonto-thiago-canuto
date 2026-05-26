@@ -70,26 +70,37 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
         logger.error(f"Erro ao enviar: {e}")
 
 
+def limpar_numero(val):
+    return (str(val or "")
+        .replace("0s.whatsapp.net", "")
+        .replace("@s.whatsapp.net", "")
+        .replace("+", "")
+        .replace(" ", "")
+        .replace("-", "")
+        .strip())
+
+
 def extrair_mensagem(data: dict):
     try:
-        logger.info(f"PAYLOAD: {json.dumps(data, ensure_ascii=False)[:3000]}")
+        logger.info(f"PAYLOAD: {json.dumps(data, ensure_ascii=False)[:2000]}")
 
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
+        # Prioriza sender_pn (número do remetente), depois os demais
         telefone = ""
-        for campo in ["phone", "sender_pn", "sender", "from", "owner"]:
-            val = str(data.get(campo, "") or "")
-           val = val.replace("@s.whatsapp.net", "").replace("0s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+        for campo in ["sender_pn", "phone", "sender", "from"]:
+            val = limpar_numero(data.get(campo, ""))
             if val and val != "None" and len(val) >= 10:
                 telefone = val
                 logger.info(f"Telefone em '{campo}': {val}")
                 break
 
         if not telefone:
-            logger.info("Sem telefone")
+            logger.info("Sem telefone válido")
             return None, None
 
+        # Pega o texto
         texto = ""
         for campo in ["text", "body"]:
             val = data.get(campo, "")
