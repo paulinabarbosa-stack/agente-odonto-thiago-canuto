@@ -80,7 +80,7 @@ def extrair_mensagem(data: dict):
         telefone = ""
         for campo in ["phone", "sender_pn", "sender", "from", "owner"]:
             val = str(data.get(campo, "") or "")
-            val = val.replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+           val = val.replace("@s.whatsapp.net", "").replace("0s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
             if val and val != "None" and len(val) >= 10:
                 telefone = val
                 logger.info(f"Telefone em '{campo}': {val}")
