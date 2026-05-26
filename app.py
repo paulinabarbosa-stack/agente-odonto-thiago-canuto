@@ -43,25 +43,16 @@ historico = {}
 def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
     try:
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
         if telefone not in historico:
             historico[telefone] = []
-
         historico[telefone].append({"role": "user", "content": str(mensagem_usuario)})
-
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for msg in historico[telefone]:
             messages.append({"role": msg["role"], "content": str(msg["content"])})
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages
-        )
-
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
         resposta = response.choices[0].message.content
         historico[telefone].append({"role": "assistant", "content": str(resposta)})
         return resposta
-
     except Exception as e:
         logger.error(f"Erro OpenAI: {e}")
         return "Desculpe, tive um probleminha. Pode repetir? 😊"
@@ -81,33 +72,38 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
 
 def extrair_mensagem(data: dict):
     try:
-        # Ignora mensagens enviadas pelo bot
-        if data.get("fromMe") is True:
-            return None, None
-        if str(data.get("wasSentByApi", "")).lower() == "true":
-            return None, None
+        # Log completo para debug
+        logger.info(f"PAYLOAD: {json.dumps(data, ensure_ascii=False)[:2000]}")
 
-        # Pega o número do remetente — prioriza sender_pn que tem o número limpo
-        sender_pn = str(data.get("sender_pn", "")).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
-        sender = str(data.get("sender", "")).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
-        phone = str(data.get("phone", "")).replace("+", "").replace(" ", "").replace("-", "").strip()
-
-        # Usa o menor número válido (sender_pn costuma ter o número correto)
-        telefone = sender_pn or sender or phone
-
-        if not telefone or telefone == "None":
+        # Ignora mensagens do próprio bot
+        if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        # Pega o texto
-        texto = (
-            data.get("text") or
-            data.get("body") or
-            (data.get("message") or {}).get("content") or
-            (data.get("message") or {}).get("conversation") or
-            ""
-        )
+        # Tenta todos os campos possíveis para o telefone
+        telefone = ""
+        for campo in ["phone", "sender_pn", "sender", "from", "owner"]:
+            val = str(data.get(campo, "") or "")
+            val = val.replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+            if val and val != "None" and len(val) >= 10:
+                telefone = val
+                logger.info(f"Telefone encontrado em '{campo}': {val}")
+                break
 
-        # Se texto for objeto, converte para string
+        if not telefone:
+            logger.info("Nenhum telefone encontrado")
+            return None, None
+
+        # Tenta todos os campos possíveis para o texto
+        texto = ""
+        for campo in ["text", "body"]:
+            val = data.get(campo, "")
+            if val and isinstance(val, str):
+                texto = val
+                break
+        if not texto:
+            msg = data.get("message") or {}
+            texto = msg.get("content") or msg.get("conversation") or ""
+
         if isinstance(texto, dict):
             texto = str(texto)
 
@@ -134,8 +130,6 @@ def home():
 def webhook():
     try:
         data = request.json
-        logger.info(f"Webhook: fromMe={data.get('fromMe')} | wasSentByApi={data.get('wasSentByApi')} | sender_pn={data.get('sender_pn')} | phone={data.get('phone')}")
-
         telefone, texto = extrair_mensagem(data)
         logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
 
@@ -152,7 +146,6 @@ def webhook():
         resposta = obter_resposta_openai(telefone, texto)
         logger.info(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(telefone, resposta)
-
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
