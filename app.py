@@ -68,6 +68,14 @@ def enviar_mensagem_whatsapp(telefone, mensagem):
         logger.error(f"Erro envio: {e}")
 
 
+def limpar_numero(val):
+    return (str(val or "")
+        .replace("0s.whatsapp.net", "")
+        .replace("@s.whatsapp.net", "")
+        .replace("+", "").replace(" ", "").replace("-", "")
+        .strip())
+
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "Isabela online 🦷"})
@@ -76,51 +84,48 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        # Lê o body de qualquer formato
         raw = request.data
-        logger.info(f"RAW BODY: {raw[:500]}")
-
         try:
             data = json.loads(raw)
         except Exception:
-            data = request.form.to_dict()
+            data = {}
 
-        logger.info(f"DATA KEYS: {list(data.keys())}")
+        # Dados ficam no nível raiz E dentro de "message" e "chat"
+        msg = data.get("message") or {}
+        chat = data.get("chat") or {}
+
+        logger.info(f"fromMe={msg.get('fromMe')} | wasSentByApi={msg.get('wasSentByApi')} | sender={msg.get('sender')} | sender_pn={msg.get('sender_pn')} | phone={chat.get('phone')}")
 
         # Ignora mensagens do próprio bot
-        if data.get("fromMe") is True or data.get("wasSentByApi") is True:
-            logger.info("Ignorado: fromMe ou wasSentByApi")
+        if msg.get("fromMe") is True or msg.get("wasSentByApi") is True:
             return jsonify({"status": "ignorado"}), 200
 
-        # Extrai telefone — tenta vários campos
+        # Telefone está dentro de "message" ou "chat"
         telefone = ""
-        for campo in ["sender_pn", "phone", "sender", "from"]:
-            val = str(data.get(campo) or "")
-            # Limpa sufixos do WhatsApp
-            val = val.replace("0s.whatsapp.net", "").replace("@s.whatsapp.net", "")
-            val = val.replace("+", "").replace(" ", "").replace("-", "").strip()
-            if val and val != "None" and len(val) >= 10:
-                telefone = val
-                logger.info(f"Telefone [{campo}]: {telefone}")
+        for val in [msg.get("sender_pn"), msg.get("sender"), chat.get("phone"), chat.get("wa_chatid")]:
+            v = limpar_numero(val)
+            if v and v != "None" and len(v) >= 10:
+                telefone = v
+                logger.info(f"Telefone: {telefone}")
                 break
 
         if not telefone:
-            logger.info(f"Sem telefone. Campos: phone={data.get('phone')} sender_pn={data.get('sender_pn')} sender={data.get('sender')}")
+            logger.info("Sem telefone")
             return jsonify({"status": "ignorado"}), 200
 
-        # Extrai texto
+        # Texto está dentro de "message"
         texto = (
-            data.get("text") or
-            data.get("body") or
-            (data.get("message") or {}).get("content") or
-            (data.get("message") or {}).get("conversation") or
+            msg.get("text") or
+            msg.get("body") or
+            msg.get("content") or
+            msg.get("conversation") or
             ""
         )
         if isinstance(texto, dict):
             texto = str(texto)
         texto = str(texto).strip()
 
-        tipo = str(data.get("messageType") or data.get("type") or "").lower()
+        tipo = str(msg.get("messageType") or msg.get("type") or "").lower()
         logger.info(f"Texto: '{texto}' | Tipo: '{tipo}'")
 
         if not texto:
