@@ -72,28 +72,24 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
 
 def extrair_mensagem(data: dict):
     try:
-        # Log completo para debug
-        logger.info(f"PAYLOAD: {json.dumps(data, ensure_ascii=False)[:2000]}")
+        logger.info(f"PAYLOAD: {json.dumps(data, ensure_ascii=False)[:3000]}")
 
-        # Ignora mensagens do próprio bot
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        # Tenta todos os campos possíveis para o telefone
         telefone = ""
         for campo in ["phone", "sender_pn", "sender", "from", "owner"]:
             val = str(data.get(campo, "") or "")
             val = val.replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
             if val and val != "None" and len(val) >= 10:
                 telefone = val
-                logger.info(f"Telefone encontrado em '{campo}': {val}")
+                logger.info(f"Telefone em '{campo}': {val}")
                 break
 
         if not telefone:
-            logger.info("Nenhum telefone encontrado")
+            logger.info("Sem telefone")
             return None, None
 
-        # Tenta todos os campos possíveis para o texto
         texto = ""
         for campo in ["text", "body"]:
             val = data.get(campo, "")
@@ -129,7 +125,7 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        data = request.json
+        data = request.json or request.get_json(force=True) or {}
         telefone, texto = extrair_mensagem(data)
         logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
 
