@@ -48,17 +48,16 @@ Colete UMA DE CADA VEZ:
 Repita os dados e informe que a equipe entrará em contato para confirmar o horário.
 
 ### 6. ENCERRAMENTO E AVALIAÇÃO
-"Foi um prazer te atender, [Nome]! 🦷✨
-Sua avaliação é muito importante pra gente:
-⭐ https://maps.app.goo.gl/FQ6bkPPTxwNBUMiv5"
+Foi um prazer te atender! Sua avaliação é muito importante pra gente:
+⭐ https://maps.app.goo.gl/FQ6bkPPTxwNBUMiv5
 
 ## REGRAS
 - Seja simpática e acolhedora
 - Use emojis com moderação
 - Faça UMA pergunta por vez
-- Se receber áudio ou imagem: "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊"
-- Se o paciente perguntar sobre disponibilidade ou horários disponíveis, responda: "Para verificar a disponibilidade, nossa equipe vai confirmar com você em breve! Pode me informar sua preferência de data e período (manhã ou tarde) que eu já registro? 😊"
-- Nunca invente preços, horários ou disponibilidade
+- Se receber áudio ou imagem, responda: Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊
+- Se o paciente perguntar sobre disponibilidade ou horários disponíveis, responda: Para verificar a disponibilidade, nossa equipe vai confirmar com você em breve! Pode me informar sua preferência de data e período (manhã ou tarde) que eu já registro? 😊
+- Nunca invente preços, horários ou disponibilidade"""
 
 # ─── Histórico em memória ────────────────────────────────────────────────────
 historico = {}
@@ -105,7 +104,6 @@ def extrair_mensagem(data: dict):
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        # Tenta pegar o telefone de vários campos possíveis
         telefone_raw = (
             data.get("phone") or
             data.get("sender_pn") or
@@ -118,7 +116,6 @@ def extrair_mensagem(data: dict):
         if not telefone:
             return None, None
 
-        # Tenta pegar o texto de vários campos possíveis
         texto = (
             data.get("text") or
             data.get("body") or
