@@ -64,19 +64,28 @@ historico = {}
 
 # ─── Funções ─────────────────────────────────────────────────────────────────
 
+def extrair_texto_puro(valor):
+    """Extrai texto puro de qualquer formato que o UAZAPI enviar."""
+    if not valor:
+        return ""
+    if isinstance(valor, str):
+        return valor.strip()
+    if isinstance(valor, dict):
+        # Formato iPhone: {'text': 'Ola', 'contextInfo': {...}}
+        if "text" in valor:
+            return str(valor["text"]).strip()
+        # Outros campos possíveis
+        for campo in ("body", "caption", "conversation"):
+            if campo in valor:
+                return str(valor[campo]).strip()
+    return str(valor).strip()
+
+
 def sanitizar_historico(msgs):
     resultado = []
     for m in msgs:
         content = m.get("content", "")
-        if isinstance(content, str):
-            resultado.append({"role": m["role"], "content": content})
-        elif isinstance(content, list):
-            texto = " ".join(
-                part.get("text", "") for part in content if isinstance(part, dict)
-            )
-            resultado.append({"role": m["role"], "content": texto})
-        else:
-            resultado.append({"role": m["role"], "content": str(content)})
+        resultado.append({"role": m["role"], "content": extrair_texto_puro(content) or ""})
     return resultado
 
 
@@ -134,7 +143,8 @@ def extrair_mensagem(data: dict):
         if not telefone:
             return None, None
 
-        texto = (
+        # Tenta extrair texto de vários campos possíveis
+        texto_raw = (
             data.get("text") or
             data.get("body") or
             (data.get("message") or {}).get("content") or
@@ -142,10 +152,7 @@ def extrair_mensagem(data: dict):
             ""
         )
 
-        # Garante que texto seja sempre string
-        if isinstance(texto, dict):
-            texto = json.dumps(texto, ensure_ascii=False)
-        texto = str(texto).strip() if texto else ""
+        texto = extrair_texto_puro(texto_raw)
 
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
