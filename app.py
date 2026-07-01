@@ -122,54 +122,45 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
         logger.error(f"Erro ao enviar: {e}")
 
 
-def extrair_telefone(data: dict) -> str:
-    """Extrai o número do REMETENTE — nunca o da instância."""
-    
-    # Log completo dos campos de telefone para diagnóstico
-    campos = {
-        "phone": data.get("phone"),
-        "sender": data.get("sender"),
-        "sender_pn": data.get("sender_pn"),
-        "from": data.get("from"),
-        "owner": data.get("owner"),
-        "chat_id": (data.get("chat") or {}).get("id"),
-        "key_remoteJid": (data.get("key") or {}).get("remoteJid"),
-    }
-    logger.info(f"Campos telefone: {json.dumps(campos, ensure_ascii=False)}")
-
-    # O campo "sender" no UAZAPI contém o JID do remetente: 5538XXXX@s.whatsapp.net
-    # O campo "owner" contém o número da instância — NÃO usar para remetente
-    
-    candidatos = [
-        data.get("sender"),
-        data.get("sender_pn"),
-        data.get("phone"),
-        data.get("from"),
-        (data.get("key") or {}).get("remoteJid"),
-        (data.get("chat") or {}).get("id"),
-    ]
-
-    owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
-
-    for c in candidatos:
-        if not c:
-            continue
-        numero = str(c).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
-        if numero and numero != owner and len(numero) >= 10:
-            return numero
-
-    return ""
-
-
 def extrair_mensagem(data: dict):
     try:
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        telefone = extrair_telefone(data)
-        if not telefone:
+        # Log completo para diagnóstico
+        logger.info(f"DATA COMPLETO: {json.dumps(data, ensure_ascii=False)[:2000]}")
+
+        # Tenta extrair o número do remetente do chat_id
+        # No UAZAPI o chat_id quando é mensagem individual é o número do contato
+        chat_id = (data.get("chat") or {}).get("id", "")
+        
+        # Campos diretos
+        phone = data.get("phone") or ""
+        sender = data.get("sender") or ""
+        sender_pn = data.get("sender_pn") or ""
+        owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
+
+        # Limpa e testa cada candidato
+        def limpar(n):
+            return str(n).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+
+        candidatos = [phone, sender, sender_pn]
+        for c in candidatos:
+            n = limpar(c)
+            if n and n != owner and len(n) >= 10:
+                logger.info(f"Telefone encontrado: {n}")
+                return n, None  # texto será extraído depois
+
+        # Tenta usar chat_id se parece um número
+        chat_limpo = limpar(chat_id)
+        if chat_limpo.isdigit() and len(chat_limpo) >= 10 and chat_limpo != owner:
+            logger.info(f"Telefone via chat_id: {chat_limpo}")
+            telefone = chat_limpo
+        else:
+            logger.info(f"Nenhum telefone válido encontrado. owner={owner} chat_id={chat_id}")
             return None, None
 
+        # Extrai texto
         texto_raw = (
             data.get("text") or
             data.get("body") or
@@ -177,7 +168,6 @@ def extrair_mensagem(data: dict):
             (data.get("message") or {}).get("conversation") or
             ""
         )
-
         texto = extrair_texto_puro(texto_raw)
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
@@ -193,8 +183,7 @@ def extrair_mensagem(data: dict):
         return None, None
 
 
-# ─── Rotas ───────────────────────────────────────────────────────────────────
-
+# Versão corrigida do webhook que usa o telefone já extraído
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "Agente Isabela online 🦷"})
@@ -204,20 +193,54 @@ def home():
 def webhook():
     try:
         data = request.json
-        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:800]}")
 
-        telefone, texto = extrair_mensagem(data)
-        logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
+        if data.get("fromMe") is True or data.get("wasSentByApi") is True:
+            return jsonify({"status": "ignorado"}), 200
+
+        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:500]}")
+
+        # Extrai telefone
+        owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
+
+        def limpar(n):
+            return str(n).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+
+        phone = limpar(data.get("phone") or "")
+        sender = limpar(data.get("sender") or "")
+        sender_pn = limpar(data.get("sender_pn") or "")
+        chat_id = limpar((data.get("chat") or {}).get("id", ""))
+
+        telefone = ""
+        for c in [phone, sender, sender_pn]:
+            if c and c != owner and len(c) >= 10:
+                telefone = c
+                break
+
+        if not telefone and chat_id.isdigit() and len(chat_id) >= 10 and chat_id != owner:
+            telefone = chat_id
+
+        logger.info(f"Campos: phone={phone} sender={sender} sender_pn={sender_pn} owner={owner} chat_id={chat_id} -> telefone={telefone}")
 
         if not telefone:
-            return jsonify({"status": "ignorado"}), 200
+            return jsonify({"status": "ignorado - sem telefone"}), 200
 
-        if texto == "__MIDIA__":
-            enviar_mensagem_whatsapp(telefone, "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊")
-            return jsonify({"status": "ok"}), 200
+        # Extrai texto
+        texto_raw = (
+            data.get("text") or
+            data.get("body") or
+            (data.get("message") or {}).get("content") or
+            (data.get("message") or {}).get("conversation") or
+            ""
+        )
+        texto = extrair_texto_puro(texto_raw)
+        tipo = (data.get("messageType") or data.get("type") or "").lower()
+
+        logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
 
         if not texto:
-            return jsonify({"status": "ignorado"}), 200
+            if tipo not in ("conversation", "text", "extendedtextmessage"):
+                enviar_mensagem_whatsapp(telefone, "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊")
+            return jsonify({"status": "ok"}), 200
 
         resposta = obter_resposta_openai(telefone, texto)
         logger.info(f"Resposta: {resposta[:100]}")
