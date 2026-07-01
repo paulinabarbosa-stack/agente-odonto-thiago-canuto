@@ -64,6 +64,22 @@ historico = {}
 
 # ─── Funções ─────────────────────────────────────────────────────────────────
 
+def sanitizar_historico(msgs):
+    resultado = []
+    for m in msgs:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            resultado.append({"role": m["role"], "content": content})
+        elif isinstance(content, list):
+            texto = " ".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+            resultado.append({"role": m["role"], "content": texto})
+        else:
+            resultado.append({"role": m["role"], "content": str(content)})
+    return resultado
+
+
 def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
     try:
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -71,11 +87,13 @@ def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
         if telefone not in historico:
             historico[telefone] = []
 
-        historico[telefone].append({"role": "user", "content": mensagem_usuario})
+        historico[telefone].append({"role": "user", "content": str(mensagem_usuario)})
+
+        msgs_limpas = sanitizar_historico(historico[telefone])
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + historico[telefone]
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + msgs_limpas
         )
 
         resposta = response.choices[0].message.content
@@ -123,6 +141,11 @@ def extrair_mensagem(data: dict):
             (data.get("message") or {}).get("conversation") or
             ""
         )
+
+        # Garante que texto seja sempre string
+        if isinstance(texto, dict):
+            texto = json.dumps(texto, ensure_ascii=False)
+        texto = str(texto).strip() if texto else ""
 
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
