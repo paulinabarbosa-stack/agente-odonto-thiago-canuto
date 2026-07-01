@@ -65,16 +65,13 @@ historico = {}
 # ─── Funções ─────────────────────────────────────────────────────────────────
 
 def extrair_texto_puro(valor):
-    """Extrai texto puro de qualquer formato que o UAZAPI enviar."""
     if not valor:
         return ""
     if isinstance(valor, str):
         return valor.strip()
     if isinstance(valor, dict):
-        # Formato iPhone: {'text': 'Ola', 'contextInfo': {...}}
         if "text" in valor:
             return str(valor["text"]).strip()
-        # Outros campos possíveis
         for campo in ("body", "caption", "conversation"):
             if campo in valor:
                 return str(valor[campo]).strip()
@@ -97,7 +94,6 @@ def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
             historico[telefone] = []
 
         historico[telefone].append({"role": "user", "content": str(mensagem_usuario)})
-
         msgs_limpas = sanitizar_historico(historico[telefone])
 
         response = client.chat.completions.create(
@@ -126,24 +122,54 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
         logger.error(f"Erro ao enviar: {e}")
 
 
+def extrair_telefone(data: dict) -> str:
+    """Extrai o número do REMETENTE — nunca o da instância."""
+    
+    # Log completo dos campos de telefone para diagnóstico
+    campos = {
+        "phone": data.get("phone"),
+        "sender": data.get("sender"),
+        "sender_pn": data.get("sender_pn"),
+        "from": data.get("from"),
+        "owner": data.get("owner"),
+        "chat_id": (data.get("chat") or {}).get("id"),
+        "key_remoteJid": (data.get("key") or {}).get("remoteJid"),
+    }
+    logger.info(f"Campos telefone: {json.dumps(campos, ensure_ascii=False)}")
+
+    # O campo "sender" no UAZAPI contém o JID do remetente: 5538XXXX@s.whatsapp.net
+    # O campo "owner" contém o número da instância — NÃO usar para remetente
+    
+    candidatos = [
+        data.get("sender"),
+        data.get("sender_pn"),
+        data.get("phone"),
+        data.get("from"),
+        (data.get("key") or {}).get("remoteJid"),
+        (data.get("chat") or {}).get("id"),
+    ]
+
+    owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
+
+    for c in candidatos:
+        if not c:
+            continue
+        numero = str(c).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
+        if numero and numero != owner and len(numero) >= 10:
+            return numero
+
+    return ""
+
+
 def extrair_mensagem(data: dict):
     try:
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return None, None
 
-        telefone_raw = (
-            data.get("phone") or
-            data.get("sender_pn") or
-            data.get("sender", "").replace("@s.whatsapp.net", "") or
-            data.get("from", "").replace("@s.whatsapp.net", "") or
-            data.get("owner", "")
-        )
-        telefone = telefone_raw.replace("+", "").replace(" ", "").replace("-", "").strip()
-
+        telefone = extrair_telefone(data)
         if not telefone:
             return None, None
 
-        # Tenta extrair texto de vários campos possíveis
         texto_raw = (
             data.get("text") or
             data.get("body") or
@@ -153,7 +179,6 @@ def extrair_mensagem(data: dict):
         )
 
         texto = extrair_texto_puro(texto_raw)
-
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
         if not texto:
@@ -179,7 +204,7 @@ def home():
 def webhook():
     try:
         data = request.json
-        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:500]}")
+        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:800]}")
 
         telefone, texto = extrair_mensagem(data)
         logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
