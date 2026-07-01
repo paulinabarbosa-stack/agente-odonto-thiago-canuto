@@ -57,7 +57,8 @@ Sua avaliação é muito importante pra gente:
 - Use emojis com moderação
 - Faça UMA pergunta por vez
 - Se receber áudio ou imagem: "Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊"
-- Nunca invente preços, horários ou disponibilidade"""
+- Se o paciente perguntar sobre disponibilidade ou horários disponíveis, responda: "Para verificar a disponibilidade, nossa equipe vai confirmar com você em breve! Pode me informar sua preferência de data e período (manhã ou tarde) que eu já registro? 😊"
+- Nunca invente preços, horários ou disponibilidade
 
 # ─── Histórico em memória ────────────────────────────────────────────────────
 historico = {}
