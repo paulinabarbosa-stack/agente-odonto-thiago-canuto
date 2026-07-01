@@ -5,7 +5,6 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 import requests
 
-# ─── Configuração ───────────────────────────────────────────────────────────
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,7 +13,6 @@ UAZAPI_URL = os.environ.get("UAZAPI_URL")
 UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
 UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE")
 
-# ─── Prompt do Agente ────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto, localizada na Praça do Sagrado Coração, 103 - Diamantina, MG. Telefone: (38) 3531-0012.
 
 Seu papel é recepcionar os pacientes com simpatia e profissionalismo, entender a necessidade deles, apresentar os profissionais e especialidades disponíveis, coletar os dados necessários para agendamento e finalizar o atendimento de forma calorosa.
@@ -59,10 +57,7 @@ Foi um prazer te atender! Sua avaliação é muito importante pra gente:
 - Se o paciente perguntar sobre disponibilidade ou horários disponíveis, responda: Para verificar a disponibilidade, nossa equipe vai confirmar com você em breve! Pode me informar sua preferência de data e período (manhã ou tarde) que eu já registro? 😊
 - Nunca invente preços, horários ou disponibilidade"""
 
-# ─── Histórico em memória ────────────────────────────────────────────────────
 historico = {}
-
-# ─── Funções ─────────────────────────────────────────────────────────────────
 
 def extrair_texto_puro(valor):
     if not valor:
@@ -77,7 +72,6 @@ def extrair_texto_puro(valor):
                 return str(valor[campo]).strip()
     return str(valor).strip()
 
-
 def sanitizar_historico(msgs):
     resultado = []
     for m in msgs:
@@ -85,32 +79,25 @@ def sanitizar_historico(msgs):
         resultado.append({"role": m["role"], "content": extrair_texto_puro(content) or ""})
     return resultado
 
-
-def obter_resposta_openai(telefone: str, mensagem_usuario: str) -> str:
+def obter_resposta_openai(telefone, mensagem_usuario):
     try:
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
         if telefone not in historico:
             historico[telefone] = []
-
         historico[telefone].append({"role": "user", "content": str(mensagem_usuario)})
         msgs_limpas = sanitizar_historico(historico[telefone])
-
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + msgs_limpas
         )
-
         resposta = response.choices[0].message.content
         historico[telefone].append({"role": "assistant", "content": resposta})
         return resposta
-
     except Exception as e:
         logger.error(f"Erro OpenAI: {e}")
         return "Desculpe, tive um probleminha. Pode repetir? 😊"
 
-
-def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
+def enviar_mensagem_whatsapp(telefone, mensagem):
     try:
         url = f"{UAZAPI_URL}/send/text"
         headers = {"Content-Type": "application/json", "token": UAZAPI_TOKEN}
@@ -121,108 +108,56 @@ def enviar_mensagem_whatsapp(telefone: str, mensagem: str):
     except Exception as e:
         logger.error(f"Erro ao enviar: {e}")
 
+def limpar_numero(n):
+    return str(n or "").replace("@s.whatsapp.net", "").replace("@c.us", "").replace("+", "").replace(" ", "").replace("-", "").strip()
 
-def extrair_mensagem(data: dict):
-    try:
-        if data.get("fromMe") is True or data.get("wasSentByApi") is True:
-            return None, None
-
-        # Log completo para diagnóstico
-        logger.info(f"DATA COMPLETO: {json.dumps(data, ensure_ascii=False)[:2000]}")
-
-        # Tenta extrair o número do remetente do chat_id
-        # No UAZAPI o chat_id quando é mensagem individual é o número do contato
-        chat_id = (data.get("chat") or {}).get("id", "")
-        
-        # Campos diretos
-        phone = data.get("phone") or ""
-        sender = data.get("sender") or ""
-        sender_pn = data.get("sender_pn") or ""
-        owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
-
-        # Limpa e testa cada candidato
-        def limpar(n):
-            return str(n).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
-
-        candidatos = [phone, sender, sender_pn]
-        for c in candidatos:
-            n = limpar(c)
-            if n and n != owner and len(n) >= 10:
-                logger.info(f"Telefone encontrado: {n}")
-                return n, None  # texto será extraído depois
-
-        # Tenta usar chat_id se parece um número
-        chat_limpo = limpar(chat_id)
-        if chat_limpo.isdigit() and len(chat_limpo) >= 10 and chat_limpo != owner:
-            logger.info(f"Telefone via chat_id: {chat_limpo}")
-            telefone = chat_limpo
-        else:
-            logger.info(f"Nenhum telefone válido encontrado. owner={owner} chat_id={chat_id}")
-            return None, None
-
-        # Extrai texto
-        texto_raw = (
-            data.get("text") or
-            data.get("body") or
-            (data.get("message") or {}).get("content") or
-            (data.get("message") or {}).get("conversation") or
-            ""
-        )
-        texto = extrair_texto_puro(texto_raw)
-        tipo = (data.get("messageType") or data.get("type") or "").lower()
-
-        if not texto:
-            if tipo not in ("conversation", "text", "extendedtextmessage"):
-                return telefone, "__MIDIA__"
-            return None, None
-
-        return telefone, texto
-
-    except Exception as e:
-        logger.error(f"Erro ao extrair: {e}")
-        return None, None
-
-
-# Versão corrigida do webhook que usa o telefone já extraído
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "Agente Isabela online 🦷"})
-
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.json
+        logger.info(f"Webhook RAW: {json.dumps(data, ensure_ascii=False)[:1000]}")
 
         if data.get("fromMe") is True or data.get("wasSentByApi") is True:
             return jsonify({"status": "ignorado"}), 200
 
-        logger.info(f"Webhook: {json.dumps(data, ensure_ascii=False)[:500]}")
+        owner = limpar_numero(data.get("owner") or "")
 
-        # Extrai telefone
-        owner = str(data.get("owner") or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
-
-        def limpar(n):
-            return str(n).replace("@s.whatsapp.net", "").replace("+", "").replace(" ", "").replace("-", "").strip()
-
-        phone = limpar(data.get("phone") or "")
-        sender = limpar(data.get("sender") or "")
-        sender_pn = limpar(data.get("sender_pn") or "")
-        chat_id = limpar((data.get("chat") or {}).get("id", ""))
+        # Tenta todos os campos possíveis para o remetente
+        candidatos = [
+            data.get("phone"),
+            data.get("sender"),
+            data.get("sender_pn"),
+            data.get("from"),
+            (data.get("key") or {}).get("remoteJid"),
+            (data.get("key") or {}).get("participant"),
+            data.get("pushName"),  # às vezes vem aqui
+            (data.get("chat") or {}).get("phone"),
+            (data.get("contact") or {}).get("phone"),
+            (data.get("contact") or {}).get("id"),
+        ]
 
         telefone = ""
-        for c in [phone, sender, sender_pn]:
-            if c and c != owner and len(c) >= 10:
-                telefone = c
+        for c in candidatos:
+            n = limpar_numero(c)
+            if n and n != owner and n.isdigit() and len(n) >= 10:
+                telefone = n
                 break
 
-        if not telefone and chat_id.isdigit() and len(chat_id) >= 10 and chat_id != owner:
-            telefone = chat_id
+        # Última tentativa: pega o chat_id se for número
+        if not telefone:
+            chat_id = limpar_numero((data.get("chat") or {}).get("id") or "")
+            if chat_id.isdigit() and len(chat_id) >= 10 and chat_id != owner:
+                telefone = chat_id
 
-        logger.info(f"Campos: phone={phone} sender={sender} sender_pn={sender_pn} owner={owner} chat_id={chat_id} -> telefone={telefone}")
+        logger.info(f"owner={owner} | telefone={telefone}")
 
         if not telefone:
-            return jsonify({"status": "ignorado - sem telefone"}), 200
+            logger.info("Sem telefone válido, ignorando")
+            return jsonify({"status": "ignorado"}), 200
 
         # Extrai texto
         texto_raw = (
@@ -235,7 +170,7 @@ def webhook():
         texto = extrair_texto_puro(texto_raw)
         tipo = (data.get("messageType") or data.get("type") or "").lower()
 
-        logger.info(f"Extraido -> tel: {telefone} | txt: {texto}")
+        logger.info(f"tel={telefone} | txt={texto} | tipo={tipo}")
 
         if not texto:
             if tipo not in ("conversation", "text", "extendedtextmessage"):
@@ -245,13 +180,11 @@ def webhook():
         resposta = obter_resposta_openai(telefone, texto)
         logger.info(f"Resposta: {resposta[:100]}")
         enviar_mensagem_whatsapp(telefone, resposta)
-
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
         logger.error(f"Erro webhook: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
