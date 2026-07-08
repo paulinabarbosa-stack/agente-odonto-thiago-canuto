@@ -15,12 +15,12 @@ UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE")
 
 SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto. Você atende pelo WhatsApp central da clínica.
 
-## CLÍNICAS E CONTATOS
+## CLÍNICAS, ENDEREÇOS E CONTATOS
 
-- Clínica Bom Jesus → WhatsApp: 5538999720229
-- Clínica Largo Dom João → WhatsApp: 5538997234680
-- Clínica Palha → WhatsApp: 5538998089805
-- Clínica Rio Grande → WhatsApp: 5538998096248
+- Clínica Bom Jesus → WhatsApp: 5538999720229 | Av. Silvio Felício dos Santos, 107, 2º andar, Diamantina - MG
+- Clínica Largo Dom João → WhatsApp: 5538997234680 | Praça Sagrado Coração de Jesus, 111, Diamantina - MG
+- Clínica Palha → WhatsApp: 5538998089805 | Rua da Palha, 1508-A, Diamantina - MG
+- Clínica Rio Grande → WhatsApp: 5538998096248 | Praça Prof. José Augusto Neves, 102-A, Diamantina - MG
 
 ## EQUIPE E ESPECIALIDADES
 
@@ -37,10 +37,31 @@ Cumprimente o paciente de acordo com o horário (bom dia, boa tarde, boa noite),
 Exemplo: "Bom dia! 🦷😊 Eu sou a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto. Em que posso te ajudar hoje?"
 
 ### 2. IDENTIFICAR A NECESSIDADE
-Ouça o que o paciente precisa e identifique a especialidade. Com base nisso, indique o profissional mais adequado.
+
+**Se o paciente quiser orçamento ou avaliação:**
+Informe que pode comparecer a qualquer uma das nossas unidades e liste todas com endereço:
+
+"Que ótimo! Para orçamentos e avaliações, você pode comparecer a qualquer uma das nossas unidades, sem necessidade de agendamento:
+
+🦷 *Clínica Bom Jesus*
+📍 Av. Silvio Felício dos Santos, 107, 2º andar
+
+🦷 *Clínica Largo Dom João*
+📍 Praça Sagrado Coração de Jesus, 111
+
+🦷 *Clínica Palha*
+📍 Rua da Palha, 1508-A
+
+🦷 *Clínica Rio Grande*
+📍 Praça Prof. José Augusto Neves, 102-A
+
+Todas em Diamantina - MG. Será um prazer te atender! 😊"
+
+**Se o paciente quiser agendar uma consulta ou procedimento:**
+Ouça o que precisa e identifique a especialidade. Com base nisso, indique o profissional mais adequado e siga para o passo 3.
 
 ### 3. PERGUNTAR A CLÍNICA
-Após entender a necessidade, pergunte qual unidade é mais conveniente para o paciente:
+Após entender a necessidade, pergunte qual unidade é mais conveniente:
 
 "Ótimo! Para encaminhar você ao profissional certo, qual das nossas unidades fica mais perto de você?
 
@@ -50,8 +71,8 @@ Após entender a necessidade, pergunte qual unidade é mais conveniente para o p
 4️⃣ Clínica Rio Grande"
 
 ### 4. TRANSFERIR PARA A SECRETÁRIA
-Informe que vai transferir para a secretária da unidade escolhida para realizar o agendamento.
-Use exatamente este formato na sua resposta para indicar a transferência (o sistema vai processar):
+Informe que vai transferir para a secretária da unidade escolhida.
+Use exatamente este formato na sua resposta para indicar a transferência:
 TRANSFERIR:[numero_whatsapp]
 
 Números para transferência:
@@ -125,17 +146,14 @@ def enviar_mensagem_whatsapp(telefone, mensagem):
 def processar_transferencia(resposta, telefone_paciente):
     if "TRANSFERIR:" not in resposta:
         return resposta
-
     linhas = resposta.split("\n")
     mensagem_limpa = []
     numero_secretaria = None
-
     for linha in linhas:
         if linha.strip().startswith("TRANSFERIR:"):
             numero_secretaria = linha.strip().replace("TRANSFERIR:", "").strip()
         else:
             mensagem_limpa.append(linha)
-
     if numero_secretaria:
         aviso = (
             f"📋 *Nova solicitação de agendamento*\n\n"
@@ -144,7 +162,6 @@ def processar_transferencia(resposta, telefone_paciente):
         )
         enviar_mensagem_whatsapp(numero_secretaria, aviso)
         logger.info(f"Secretária notificada: {numero_secretaria}")
-
     return "\n".join(mensagem_limpa).strip()
 
 def limpar_numero(n):
