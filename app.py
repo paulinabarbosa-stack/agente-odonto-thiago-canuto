@@ -13,11 +13,16 @@ UAZAPI_URL = os.environ.get("UAZAPI_URL")
 UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
 UAZAPI_INSTANCE = os.environ.get("UAZAPI_INSTANCE")
 
-SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto, localizada na Praça do Sagrado Coração, 103 - Diamantina, MG. Telefone: (38) 3531-0012.
+SYSTEM_PROMPT = """Você é a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto. Você atende pelo WhatsApp central da clínica.
 
-Seu papel é recepcionar os pacientes com simpatia e profissionalismo, entender a necessidade deles, apresentar os profissionais e especialidades disponíveis, coletar os dados necessários para agendamento e finalizar o atendimento de forma calorosa.
+## CLÍNICAS E CONTATOS
 
-## EQUIPE DA CLÍNICA
+- Clínica Bom Jesus → WhatsApp: 5538999720229
+- Clínica Largo Dom João → WhatsApp: 5538997234680
+- Clínica Palha → WhatsApp: 5538998089805
+- Clínica Rio Grande → WhatsApp: 5538998096248
+
+## EQUIPE E ESPECIALIDADES
 
 - Dra. Luisa Braga → Prótese Dentária e Bichectomia
 - Dra. Priscila Mourão → Odontopediatria e Clareamento Dental
@@ -27,35 +32,44 @@ Seu papel é recepcionar os pacientes com simpatia e profissionalismo, entender 
 ## FLUXO DE ATENDIMENTO
 
 ### 1. BOAS-VINDAS
-Cumprimente o paciente de forma calorosa e apresente-se. Pergunte o nome dele.
+Cumprimente o paciente de acordo com o horário (bom dia, boa tarde, boa noite) e apresente-se.
+Pergunte com qual clínica deseja falar:
+
+"Olá! 😊 Eu sou a Isabela, recepcionista virtual da clínica Especialidades Odontológicas Dr. Thiago Canuto.
+Com qual das nossas unidades você deseja falar?
+
+1️⃣ Clínica Bom Jesus
+2️⃣ Clínica Largo Dom João
+3️⃣ Clínica Palha
+4️⃣ Clínica Rio Grande"
 
 ### 2. IDENTIFICAR A NECESSIDADE
-Pergunte o que o paciente está precisando ou qual especialidade tem interesse.
+Após o paciente escolher a clínica, pergunte o nome dele e o que está precisando ou qual especialidade tem interesse.
 
 ### 3. APRESENTAR O PROFISSIONAL
 Com base na necessidade, indique o profissional mais adequado.
 
-### 4. COLETAR DADOS PARA AGENDAMENTO
-Colete UMA DE CADA VEZ:
-- Nome completo
-- Telefone de contato (com DDD)
-- Data preferida para a consulta
-- Período preferido: manhã, tarde ou qualquer horário
+### 4. TRANSFERIR PARA A SECRETÁRIA
+Informe que vai transferir para a secretária da unidade escolhida para realizar o agendamento.
+Use exatamente este formato para transferir (invisível para o paciente — apenas para o sistema):
+TRANSFERIR:[numero_whatsapp]
 
-### 5. CONFIRMAR AGENDAMENTO
-Repita os dados e informe que a equipe entrará em contato para confirmar o horário.
+Números para transferência:
+- Bom Jesus: TRANSFERIR:5538999720229
+- Largo Dom João: TRANSFERIR:5538997234680
+- Palha: TRANSFERIR:5538998089805
+- Rio Grande: TRANSFERIR:5538998096248
 
-### 6. ENCERRAMENTO E AVALIAÇÃO
-Foi um prazer te atender! Sua avaliação é muito importante pra gente:
-⭐ https://maps.app.goo.gl/FQ6bkPPTxwNBUMiv5
+Depois de indicar a transferência, envie esta mensagem ao paciente:
+"Perfeito! Vou te transferir agora para a secretária da Clínica [nome da clínica] para realizar o seu agendamento. Em instantes ela entrará em contato com você! 😊🦷"
 
 ## REGRAS
 - Seja simpática e acolhedora
 - Use emojis com moderação
 - Faça UMA pergunta por vez
 - Se receber áudio ou imagem, responda: Olá! No momento só consigo receber mensagens de texto. Pode me escrever? 😊
-- Se o paciente perguntar sobre disponibilidade ou horários disponíveis, responda: Para verificar a disponibilidade, nossa equipe vai confirmar com você em breve! Pode me informar sua preferência de data e período (manhã ou tarde) que eu já registro? 😊
-- Nunca invente preços, horários ou disponibilidade"""
+- Nunca invente preços, horários ou disponibilidade
+- O agendamento é feito pela secretária — não tente agendar você mesmo"""
 
 historico = {}
 
@@ -104,9 +118,35 @@ def enviar_mensagem_whatsapp(telefone, mensagem):
         numero_limpo = telefone.replace("+", "").replace(" ", "").replace("-", "").strip()
         payload = {"number": numero_limpo, "text": mensagem, "instance": UAZAPI_INSTANCE}
         response = requests.post(url, headers=headers, json=payload, timeout=10)
-        logger.info(f"Enviado para {numero_limpo}: {response.status_code} | {response.text}")
+        logger.info(f"Enviado para {numero_limpo}: {response.status_code}")
     except Exception as e:
         logger.error(f"Erro ao enviar: {e}")
+
+def processar_transferencia(resposta, telefone_paciente):
+    """Detecta comando de transferência e notifica a secretária."""
+    if "TRANSFERIR:" not in resposta:
+        return resposta
+
+    linhas = resposta.split("\n")
+    mensagem_limpa = []
+    numero_secretaria = None
+
+    for linha in linhas:
+        if linha.strip().startswith("TRANSFERIR:"):
+            numero_secretaria = linha.strip().replace("TRANSFERIR:", "").strip()
+        else:
+            mensagem_limpa.append(linha)
+
+    if numero_secretaria:
+        aviso = (
+            f"📋 *Nova solicitação de agendamento*\n\n"
+            f"Paciente: {telefone_paciente}\n"
+            f"O paciente foi informado que a secretária entrará em contato para realizar o agendamento."
+        )
+        enviar_mensagem_whatsapp(numero_secretaria, aviso)
+        logger.info(f"Secretária notificada: {numero_secretaria}")
+
+    return "\n".join(mensagem_limpa).strip()
 
 def limpar_numero(n):
     return str(n or "").replace("@s.whatsapp.net", "").replace("@c.us", "").replace("+", "").replace(" ", "").replace("-", "").strip()
@@ -126,7 +166,6 @@ def webhook():
 
         owner = limpar_numero(data.get("owner") or "")
 
-        # Tenta todos os campos possíveis para o remetente
         candidatos = [
             data.get("phone"),
             data.get("sender"),
@@ -134,7 +173,6 @@ def webhook():
             data.get("from"),
             (data.get("key") or {}).get("remoteJid"),
             (data.get("key") or {}).get("participant"),
-            data.get("pushName"),  # às vezes vem aqui
             (data.get("chat") or {}).get("phone"),
             (data.get("contact") or {}).get("phone"),
             (data.get("contact") or {}).get("id"),
@@ -147,7 +185,6 @@ def webhook():
                 telefone = n
                 break
 
-        # Última tentativa: pega o chat_id se for número
         if not telefone:
             chat_id = limpar_numero((data.get("chat") or {}).get("id") or "")
             if chat_id.isdigit() and len(chat_id) >= 10 and chat_id != owner:
@@ -156,10 +193,8 @@ def webhook():
         logger.info(f"owner={owner} | telefone={telefone}")
 
         if not telefone:
-            logger.info("Sem telefone válido, ignorando")
             return jsonify({"status": "ignorado"}), 200
 
-        # Extrai texto
         texto_raw = (
             data.get("text") or
             data.get("body") or
@@ -178,8 +213,9 @@ def webhook():
             return jsonify({"status": "ok"}), 200
 
         resposta = obter_resposta_openai(telefone, texto)
-        logger.info(f"Resposta: {resposta[:100]}")
-        enviar_mensagem_whatsapp(telefone, resposta)
+        resposta_final = processar_transferencia(resposta, telefone)
+        logger.info(f"Resposta: {resposta_final[:100]}")
+        enviar_mensagem_whatsapp(telefone, resposta_final)
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
